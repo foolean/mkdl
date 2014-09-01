@@ -60,7 +60,6 @@ Where:
     -d            - Print additional debugging messages
     -h            - Print this message and exit
     -i [FILE]     - File with the list of additional packages to add
-    -o [OS]       - Operating system to build an image for
     -O [PATH]     - Path to place the output files in
     -p [PASSWD]   - Password to use for the root account in the image
     -r [RELEASE]  - Operating system release to build
@@ -78,7 +77,7 @@ OS=$(lsb_release -is | tr 'A-Z' 'a-z')
 RELEASE=$(lsb_release -rs)
 ARCH=$(uname -m)
 if [ "${ARCH}" == "x86_64" ]; then
-    case OS in
+    case ${OS} in
         debian)
             ARCH="amd64";;
     esac
@@ -95,7 +94,7 @@ iwl6000g2a-firmware ql2100-firmware iwl1000-firmware xorg-x11-drv-ati-firmware \
 zd1211-firmware iwl3945-firmware"
 
 # Parse the command-line options
-while getopts "a:cdhi:o:O:p:r:v" OPTION
+while getopts "a:cdhi:O:p:r:v" OPTION
 do
     case $OPTION in
         a)
