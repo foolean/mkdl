@@ -12,8 +12,6 @@
 #   debootstrap - the main utility used to build the inital image
 #   lsb-release - the lsb-release utility is used to get the current 
 #                 operating system codename.
-#   whois       - the mkpasswd command is part of the whois package
-#
 # License:
 #   This program is free software: you can redistribute it and/or modify
 #   it under the terms of the GNU General Puplic License as published by
@@ -62,7 +60,6 @@ Where:
     -d            - Print additional debugging messages
     -h            - Print this message and exit
     -i [FILE]     - File with the list of additional packages to add
-    -o [OS]       - Operating system to build an image for
     -O [PATH]     - Path to place the output files in
     -p [PASSWD]   - Password to use for the root account in the image
     -r [RELEASE]  - Operating system release to build
@@ -80,9 +77,10 @@ OS=$(lsb_release -is | tr 'A-Z' 'a-z')
 RELEASE=$(lsb_release -rs)
 ARCH=$(uname -m)
 if [ "${ARCH}" == "x86_64" ]; then
-    case OS in
+    case ${OS} in
         debian)
-            ARCH="amd64";;
+            ARCH="amd64"
+            ;;
     esac
 fi
 PASSWD="diskless"
@@ -90,7 +88,7 @@ OUTROOT="$(readlink -f ~/mkdlbuild)"
 PACKAGES="firmware-linux-free,lsb-release,etckeeper,linux-image-${ARCH},locales,puppet,coreutils,less,openssh-client"
 
 # Parse the command-line options
-while getopts "a:cdhi:o:O:p:r:v" OPTION
+while getopts "a:cdhi:O:p:r:v" OPTION
 do
     case $OPTION in
         a)
@@ -134,9 +132,6 @@ done
 IMAGE="diskless-${OS}-${RELEASE}-${ARCH}.img"
 PXEDIR="$(readlink -f ${OUTROOT})/pxe/${OS}/${RELEASE}/${ARCH}"
 IMGDIR="$(readlink -f ${OUTROOT})/rootfs/${OS}/${RELEASE}/${ARCH}"
-CENTOS_URL="http://mirror.centos.org/centos/${RELEASE}/os/${ARCH}/Packages/"
-CENTOS_RELEASE=$(wget -O- http://mirror.centos.org/centos/${RELEASE}/os/${ARCH}/Packages/ 2>/dev/null | grep "centos-release" | sed -e 's/^.*centos-release/centos-release/' -e 's/.rpm.*/.rpm/')
-CENTOS_RELEASE_RPM="${CENTOS_URL}/${CENTOS_RELEASE}"
 SHA512_SALT=$(openssl rand 128 | tr -dc "A-Za-z0-9" | head -c 16)
 ENCRYPTED_PASSWD=$(perl -e 'print crypt("'${PASSWD}'", "\$6\$'${SHA512_SALT}'\$")')
 
@@ -155,9 +150,6 @@ debug "IMAGE              = '${IMAGE}'"
 debug "IMGDIR             = '${IMGDIR}'"
 debug "PXEDIR             = '${PXEDIR}'"
 debug "PACKAGES           = '${PACKAGES}'"
-debug "CENTOS_URL         = '${CENTOS_URL}'"
-debug "CENTOS_RELEASE     = '${CENTOS_RELEASE}'"
-debug "CENTOS_RELEASE_RPM = '${CENTOS_RELEASE_RPM}'"
 
 # Make sure that we're on the correct OS
 if [ "${OS}" != "debian" ]; then
@@ -257,7 +249,6 @@ EOF
 fi
 
 # Set the root password
-ENCRYPTED_PASSWD=$(mkpasswd -m sha-512 "${PASSWD}")
 if [ $(grep -c "root.*${ENCRYPTED_PASSWD}" "${IMGDIR}/etc/shadow") -eq 0 ]; then
     chroot "${IMGDIR}"/ usermod -p "${ENCRYPTED_PASSWD}" root
     chroot "${IMGDIR}"/ chage -d 0 root
