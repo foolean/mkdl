@@ -74,7 +74,7 @@ VERBOSE=0
 CHROOT=0
 PKGSFILE=""
 OS=$(lsb_release -is | tr 'A-Z' 'a-z')
-RELEASE=$(lsb_release -rs)
+RELEASE=$(lsb_release -rs | cut -f1 -d.)
 ARCH=$(uname -m)
 if [ "${ARCH}" == "x86_64" ]; then
     case ${OS} in
@@ -141,6 +141,9 @@ IMGDIR="$(readlink -f ${OUTROOT})/rootfs/${OS}/${RELEASE}/${ARCH}"
 CENTOS_URL="http://mirror.centos.org/centos/${RELEASE}/os/${ARCH}/Packages/"
 CENTOS_RELEASE=$(wget -O- http://mirror.centos.org/centos/${RELEASE}/os/${ARCH}/Packages/ 2>/dev/null | grep "centos-release" | sed -e 's/^.*centos-release/centos-release/' -e 's/.rpm.*/.rpm/')
 CENTOS_RELEASE_RPM="${CENTOS_URL}/${CENTOS_RELEASE}"
+EPEL_URL="http://download.fedoraproject.org/pub/epel/${RELEASE}/${ARCH}/"
+EPEL_RELEASE=$(wget -O- "${EPEL_URL}" 2>/dev/null | grep "epel-release.*\.noarch\.rpm" | sed -e 's/^.*href="//' -e 's/">.*//')
+EPEL_RELEASE_RPM="${EPEL_URL}/${EPEL_RELEASE}"
 SHA512_SALT=$(openssl rand 128 | tr -dc "A-Za-z0-9" | head -c 16)
 ENCRYPTED_PASSWD=$(perl -e 'print crypt("'${PASSWD}'", "\$6\$'${SHA512_SALT}'\$")')
 
@@ -162,6 +165,9 @@ debug "PACKAGES           = '${PACKAGES}'"
 debug "CENTOS_URL         = '${CENTOS_URL}'"
 debug "CENTOS_RELEASE     = '${CENTOS_RELEASE}'"
 debug "CENTOS_RELEASE_RPM = '${CENTOS_RELEASE_RPM}'"
+debug "EPEL_URL           = '${EPEL_URL}'"
+debug "EPEL_RELEASE       = '${EPEL_RELEASE}'"
+debug "EPEL_RELEASE_RPM   = '${EPEL_RELEASE_RPM}'"
 
 # Make sure that we're on the correct OS
 if [ "${OS}" != "centos" ]; then
@@ -189,6 +195,10 @@ rpm --rebuilddb --root="${IMGDIR}"
 # Install centos-release
 verbose "Installing centos-release"
 rpm -i --root="${IMGDIR}" --nodeps -H "${CENTOS_RELEASE_RPM}"
+
+# Install epel-release
+verbose "Installing epel-release"
+rpm -i --root="${IMGDIR}" --nodeps -H "${EPEL_RELEASE_RPM}"
 
 # Populate /etc/fstab
 echo "Populating /etc/fstab"
