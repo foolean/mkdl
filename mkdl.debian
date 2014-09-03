@@ -30,11 +30,18 @@
 #
 ###############################################################################
 
+# verbose - helper routine to print verbose messages
+verbose() {
+    if [ "${VERBOSE}" -ge 1 ]; then
+        echo "$*"
+    fi
+}
+
 # debug - helper routine to print debugging messages
 debug() {
-  if [ "${DEBUG}" -eq 1 ]; then
-      echo "debug: $*"
-  fi
+    if [ "${DEBUG}" -eq 1 ]; then
+        echo "debug: $*"
+    fi
 }
 
 # fatal - helper function to print an error message and exit
@@ -43,56 +50,47 @@ fatal() {
     exit 1
 }
 
-# get_arch - get the system architecture
-get_arch() {
-    _ARCH=$(uname -m)
-    # Debian uses 'amd64' instead of 'x86_64'
-    if [ "${_ARCH}" == "x86_64" ]; then
-        _ARCH="amd64"
-    fi
-    echo "${_ARCH}"
-}
-
-# get_release - get the current operating system release
-get_release() {
-    if [ -f "/usr/bin/lsb_release" ]; then
-        echo $(lsb_release -c | awk '{print $2}')
-    else
-        echo "unknown"
-    fi
-}
-
 # Simple usage subroutine
 usage() {
     cat << EOF
 usage: $(basename $0) [OPTIONS]
 
 Where:
-    -a [ARCH]     - Architecture to build
+    -a [ARCH]     - Architecture to build an image for
     -c            - Chroot into the image after building it
                     (useful for last-minute changes before packing)
-    -d            - Print the actual open port diff
-    -p [PACKAGES] - Comma separated list of additional
-                    packages to be installed.
-    -r [RELEASE]  - Release to build
+    -d            - Print additional debugging messages
     -h            - Print this message and exit
+    -i [FILE]     - File with the list of additional packages to add
+    -o [OS]       - Operating system to build an image for
+    -O [PATH]     - Path to place the output files in
+    -p [PASSWD]   - Password to use for the root account in the image
+    -r [RELEASE]  - Operating system release to build
+    -v            - Print more verbose output
 EOF
     exit 1
 }
 
-# Initialize our variables
-ARCH=$(get_arch)
+# Set variables to their defaults
 DEBUG=0
+VERBOSE=0
 CHROOT=0
-FSTYPE=$(mount | grep " / " | awk '{print $5}')
-IMGROOT=$(readlink -f image-root)
-OS=$(lsb_release -i | cut -f2 -d: | awk '{print $1}' | tr 'A-Z' 'a-z')
-PACKAGES="firmware-linux-free,lsb-release,etckeeper,linux-image-${ARCH},locales,puppet,coreutils,less,openssh-client"
+PKGSFILE=""
+OS=$(lsb_release -is | tr 'A-Z' 'a-z')
+RELEASE=$(lsb_release -rs)
+ARCH=$(uname -m)
+if [ "${ARCH}" == "x86_64" ]; then
+    case OS in
+        debian)
+            ARCH="amd64";;
+    esac
+fi
 PASSWD="diskless"
-RELEASE=$(get_release)
+OUTROOT="$(readlink -f ~/mkdlbuild)"
+PACKAGES="firmware-linux-free,lsb-release,etckeeper,linux-image-${ARCH},locales,puppet,coreutils,less,openssh-client"
 
 # Parse the command-line options
-while getopts "a:cdhp:P:r:" OPTION
+while getopts "a:cdhi:o:O:p:r:v" OPTION
 do
     case $OPTION in
         a)
@@ -101,51 +99,83 @@ do
         c)
             CHROOT=1
             ;;
-        d) 
+        d)
             DEBUG=1
             ;;
-        h) 
+        h)
             usage
             exit 1
             ;;
-        p)
-            PACKAGES="${PACKAGES},${OPTARG}"
+        i)
+            PKGSFILE=${OPTARG}
             ;;
-        P)
+#        o)
+#            OS=${OS}
+#            ;;
+        O)
+            OUTROOT=${OPTARG}
+            ;;
+        p)
             PASSWD=${OPTARG}
             ;;
         r)
             RELEASE=${OPTARG}
             ;;
-        ?) 
+        v)
+            VERBOSE=$((VERBOSE + 1))
+            ;;
+        ?)
             usage
             exit 1
             ;;
     esac
 done
 
-# Make sure that we have a valid OS
-case $OS in
-    debian)
-        ;;
-    *)
-        fatal "unknown OS '${OS}', exiting"
-        exit 1
-        ;;
-esac
-
 IMAGE="diskless-${OS}-${RELEASE}-${ARCH}.img"
-OUTDIR="$(readlink -f .)/pxe/${OS}/${RELEASE}/${ARCH}"
+PXEDIR="$(readlink -f ${OUTROOT})/pxe/${OS}/${RELEASE}/${ARCH}"
+IMGDIR="$(readlink -f ${OUTROOT})/rootfs/${OS}/${RELEASE}/${ARCH}"
+CENTOS_URL="http://mirror.centos.org/centos/${RELEASE}/os/${ARCH}/Packages/"
+CENTOS_RELEASE=$(wget -O- http://mirror.centos.org/centos/${RELEASE}/os/${ARCH}/Packages/ 2>/dev/null | grep "centos-release" | sed -e 's/^.*centos-release/centos-release/' -e 's/.rpm.*/.rpm/')
+CENTOS_RELEASE_RPM="${CENTOS_URL}/${CENTOS_RELEASE}"
+SHA512_SALT=$(openssl rand 128 | tr -dc "A-Za-z0-9" | head -c 16)
+ENCRYPTED_PASSWD=$(perl -e 'print crypt("'${PASSWD}'", "\$6\$'${SHA512_SALT}'\$")')
 
-debug "OS       = '${OS}'"
-debug "REALEASE = '${RELEASE}'"
-debug "ARCH     = '${ARCH}'"
-debug "IMAGE    = '${IMAGE}'"
-debug "IMGROOT  = '${IMGROOT}'"
-debug "PACKAGES = '${PACKAGES}'"
-debug "FSTYPE   = '${FSTYPE}'"
-debug "PASSWD   = '${PASSWD}'"
-debug "OUTDIR   = '${OUTDIR}'"
+# Print out the variables for debugging
+debug "OS                 = '${OS}'"
+debug "RELEASE            = '${RELEASE}'"
+debug "ARCH               = '${ARCH}'"
+debug "PASSWD             = '${PASSWD}'"
+debug "SHA512_SALT        = '${SHA512_SALT}'"
+debug "ENCRYPTED_PASSWD   = '${ENCRYPTED_PASSWD}'"
+debug "OUTROOT            = '${OUTROOT}'"
+debug "CHROOT             = '${CHROOT}'"
+debug "DEBUG              = '${DEBUG}'"
+debug "PKGSFILE           = '${PKGSFILE}'"
+debug "IMAGE              = '${IMAGE}'"
+debug "IMGDIR             = '${IMGDIR}'"
+debug "PXEDIR             = '${PXEDIR}'"
+debug "PACKAGES           = '${PACKAGES}'"
+debug "CENTOS_URL         = '${CENTOS_URL}'"
+debug "CENTOS_RELEASE     = '${CENTOS_RELEASE}'"
+debug "CENTOS_RELEASE_RPM = '${CENTOS_RELEASE_RPM}'"
+
+# Make sure that we're on the correct OS
+if [ "${OS}" != "debian" ]; then
+    fatal "Unable to build Debian image on ${OS}"
+    exit 1; # should never get here
+fi
+
+# Make sure that IMGDIR exists
+if [ ! -d "${IMGDIR}" ]; then
+    verbose "Creating '${IMGDIR}'"
+    mkdir -p "${IMGDIR}"
+fi
+
+# Make sure that PXEDIR exists
+if [ ! -d "${PXEDIR}" ]; then
+    verbose "Creating '${PXEDIR}'"
+    mkdir -p "${PXEDIR}"
+fi
 
 # We must have debootstrap for any of this to work
 HAVE_DEBOOTSTRAP=$(dpkg -l debootstrap | grep -c "^ii debootstrap")
@@ -163,87 +193,87 @@ if [ ! ${HAVE_WHOIS} ]; then
 fi
 
 # Make sure the working directory exists
-if [ ! -d "${IMGROOT}" ]; then
-    echo "Creating ${IMGROOT}"
-    mkdir "${IMGROOT}"
+if [ ! -d "${IMGDIR}" ]; then
+    echo "Creating ${IMGDIR}"
+    mkdir "${IMGDIR}"
 fi
 
 # Build the image directory.  We'll use the precense of
 # /boot/vmlinuz-*-${ARCH} within the image directory to
 # determine if this process has already been run
-if [ ! -f "${IMGROOT}/boot/vmlinuz-"*"-${ARCH}" ]; then
-    echo "Building the image in ${IMGROOT}"
+if [ ! -f "${IMGDIR}/boot/vmlinuz-"*"-${ARCH}" ]; then
+    echo "Building the image in ${IMGDIR}"
     /usr/sbin/debootstrap       \
         --arch "${ARCH}"        \
         --include "${PACKAGES}" \
-        ${RELEASE} ${IMGROOT}
+        ${RELEASE} ${IMGDIR}
 fi
 
 # Copy in the TTY devices.
 # NOTE: It may be better to just use mknod
 for TTY in /dev/tty[1-6]; do
-    if [ ! -e "${IMGROOT}${TTY}" ]; then
+    if [ ! -e "${IMGDIR}${TTY}" ]; then
         echo "Copying in ${TTY}"
-        cp -a "${TTY}" "${IMGROOT}/dev/"
+        cp -a "${TTY}" "${IMGDIR}/dev/"
     fi
 done
 
 # Copy in disk devices
 for DISK in /dev/sd*; do
-    if [ ! -e "${IMGROOT}${DISK}" ]; then
+    if [ ! -e "${IMGDIR}${DISK}" ]; then
         echo "Copying in ${DISK}"
-        cp -a "${DISK}" "${IMGROOT}/dev/"
+        cp -a "${DISK}" "${IMGDIR}/dev/"
     fi
 done
 
 # Set the locales
-if [ $(egrep -v "^#|^$" "${IMGROOT}/etc/locale.gen"  | wc -l) -eq 0 ]; then
-#    chroot "${IMGROOT}"/ apt-get -y --force-yes install locales
-    cat >> "${IMGROOT}/etc/locale.gen" << EOF
+if [ $(egrep -v "^#|^$" "${IMGDIR}/etc/locale.gen"  | wc -l) -eq 0 ]; then
+#    chroot "${IMGDIR}"/ apt-get -y --force-yes install locales
+    cat >> "${IMGDIR}/etc/locale.gen" << EOF
 en_US ISO-8859-1
 en_US.ISO-8859-15 ISO-8859-15
 en_US.UTF-8 UTF-8
 EOF
-    chroot "${IMGROOT}"/ locale-gen
-    chroot "${IMGROOT}"/ etckeeper commit "set locales"
+    chroot "${IMGDIR}"/ locale-gen
+    chroot "${IMGDIR}"/ etckeeper commit "set locales"
 fi
 
 # Set the initial hostname to 'diskless'
-if [ "$(cat ${IMGROOT}/etc/hostname)" != "diskless" ]; then
+if [ "$(cat ${IMGDIR}/etc/hostname)" != "diskless" ]; then
     echo "Setting /etc/hostname"
-    echo "diskless" > "${IMGROOT}/etc/hostname"
-    chroot "${IMGROOT}"/ etckeeper commit "set /etc/hostname"
+    echo "diskless" > "${IMGDIR}/etc/hostname"
+    chroot "${IMGDIR}"/ etckeeper commit "set /etc/hostname"
 fi
 
 # Make sure that eth0 is defined
-if [ $(grep -c "eth0" "${IMGROOT}/etc/network/interfaces") -eq 0 ]; then
+if [ $(grep -c "eth0" "${IMGDIR}/etc/network/interfaces") -eq 0 ]; then
     echo "Setting /etc/network/interfaces"
-    cat >> "${IMGROOT}/etc/network/interfaces" << EOF
+    cat >> "${IMGDIR}/etc/network/interfaces" << EOF
 
 auto eth0
 iface eth0 inet dhcp
 EOF
-    chroot "${IMGROOT}"/ etckeeper commit "set /etc/network/interfaces"
+    chroot "${IMGDIR}"/ etckeeper commit "set /etc/network/interfaces"
 fi
 
 # Set the root password
 ENCRYPTED_PASSWD=$(mkpasswd -m sha-512 "${PASSWD}")
-if [ $(grep -c "root.*${ENCRYPTED_PASSWD}" "${IMGROOT}/etc/shadow") -eq 0 ]; then
-    chroot "${IMGROOT}"/ usermod -p "${ENCRYPTED_PASSWD}" root
-    chroot "${IMGROOT}"/ chage -d 0 root
-    chroot "${IMGROOT}"/ etckeeper commit "set root password and force change at first login" 
+if [ $(grep -c "root.*${ENCRYPTED_PASSWD}" "${IMGDIR}/etc/shadow") -eq 0 ]; then
+    chroot "${IMGDIR}"/ usermod -p "${ENCRYPTED_PASSWD}" root
+    chroot "${IMGDIR}"/ chage -d 0 root
+    chroot "${IMGDIR}"/ etckeeper commit "set root password and force change at first login" 
 fi
 
 # Copy in the init script
-if [ ! -f "${IMGROOT}/init" ]; then
+if [ ! -f "${IMGDIR}/init" ]; then
     echo "Copying in diskless init script"
-    cp diskless-init "${IMGROOT}/init"
-    chown root.root "${IMGROOT}/init"
-    chmod 0755 "${IMGROOT}/init"
+    cp diskless-init "${IMGDIR}/init"
+    chown root.root "${IMGDIR}/init"
+    chmod 0755 "${IMGDIR}/init"
 fi
 
 echo "Populating /etc/fstab"
-cat > "${IMGROOT}/etc/fstab" << EOF
+cat > "${IMGDIR}/etc/fstab" << EOF
 # /etc/fstab: static file system information.
 /dev/root  / ${FSTYPE} defaults 0 0
 #none      /                 tmpfs   defaults                    0 0
@@ -263,29 +293,29 @@ EOF
 
 # Chroot into the image for any last minute fixups
 if [ ${CHROOT} -gt 0 ]; then
-    echo "Chrooting into ${IMGROOT}"
-    chroot "${IMGROOT}"/ /bin/su -
+    echo "Chrooting into ${IMGDIR}"
+    chroot "${IMGDIR}"/ /bin/su -
 fi
 
 # Make sure the output directory exists
-if [ ! -d "${OUTDIR}" ]; then
-    echo "Creating ${OUTDIR}"
-    mkdir -p "${OUTDIR}"
+if [ ! -d "${PXEDIR}" ]; then
+    echo "Creating ${PXEDIR}"
+    mkdir -p "${PXEDIR}"
 fi
 
 # Grab a copy of vmlinuz
 echo "Grabbing vmlinuz"
-cp "${IMGROOT}/boot/vmlinuz-"*"-${ARCH}" "${OUTDIR}/vmlinuz"
+cp "${IMGDIR}/boot/vmlinuz-"*"-${ARCH}" "${PXEDIR}/vmlinuz"
 
 # Create image from directory
 echo "Packing image"
-cd "${IMGROOT}"
-find . -print0 | cpio -0 -H newc -o | gzip -c > "${OUTDIR}/${IMAGE}"
+cd "${IMGDIR}"
+find . -print0 | cpio -0 -H newc -o | gzip -c > "${PXEDIR}/${IMAGE}"
 
 # Create a helper file with the pxe configuration
 echo "Creating PXE config"
-MIN_SIZE=$(( $(du -s "${IMGROOT}" | awk '{print $1}') + 256000 ))
-cat > "${OUTDIR}/pxe.cfg" << EOF
+MIN_SIZE=$(( $(du -s "${IMGDIR}" | awk '{print $1}') + 256000 ))
+cat > "${PXEDIR}/pxe.cfg" << EOF
 # This is an example config for PXE booting the diskless image
 LABEL diskless
     MENU LABEL Diskless ${OS} ${RELEASE} ${ARCH} image
