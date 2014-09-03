@@ -1,0 +1,97 @@
+Diskless Utility
+================
+
+mkdl (Make Diskless Linux) is a simple script to create a diskless
+Linux image that can boot from PXE, or any other bootable source,
+without the need for NFS.  
+
+CentOS:
+    http://geek.co.il/2010/03/14/how-to-build-a-chroot-jail-environment-for-centos
+
+Debian:
+    This work is based on David LaRose's document:
+        How To Set Up a Diskless Debian GNU/Linux Box
+        http://www.cs.cmu.edu/~dlr/debian_netboot_v1.2.pdf
+
+
+Usage
+=====
+
+    usage: mkdl.centos [OPTIONS]
+
+    Where:
+        -a [ARCH]     - Architecture to build an image for
+        -c            - Chroot into the image after building it
+                        (useful for last-minute changes before packing)
+        -d            - Print additional debugging messages
+        -h            - Print this message and exit
+        -i [FILE]     - File with the list of additional packages to add
+        -o [OS]       - Operating system to build an image for
+        -O [PATH]     - Path to place the output files in
+        -p [PASSWD]   - Password to use for the root account in the image
+        -r [RELEASE]  - Operating system release to build
+        -v            - Print more verbose output
+
+    Examples:
+    
+    # Create a Debian Wheezy image
+    $PATH_TO/mkdl -d -r wheezy
+
+    The resulting image, kernel, and PXE configuration sample will be
+    found in: $DUTIL_ROOT/pxe/debian/$CODENAME/$ARCH/
+
+
+Output structure
+================
+
+* Output root defaults to ~/mkdlbuild
+
+$OUTPUT_ROOT
++---+ pxe
+|     +---+ $OS
+|           +---+ $RELEASE
+|                 +---+ $ARCHITECTURE
+|
++---+ rootfs
+      +---+ $OS
+            +---+ $RELEASE
+                  +---+ $ARCHITECTURE
+
+example:
+  /tmp/diskless/rootfs/centos/6/x86_64/
+  /tmp/diskless/rootfs/debian/wheezy/x86_64/
+  etc.
+
+
+Operating Systems
+=================
+
+    mkdl currently only supports the CentOS and Debian operating system though
+    it will be extended to more operating systems in the future.
+
+
+Dependencies
+============
+
+    Debian:
+        debootstrap - the main utility used to build the inital image
+        lsb-release - the lsb-release utility is used to get the current 
+                      operating system codename.
+        whois       - the mkpasswd command is part of the whois package
+
+
+License
+=======
+
+   This program is free software: you can redistribute it and/or modify
+   it under the terms of the GNU General Puplic License as published by
+   the Free Software Foundation, either version 3 of the License, or
+   any later version.
+
+   This program is distributed in the hope that it will be useful,
+   but WITHOUT ANY WARRANTY; without even the implied warranty of
+   MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+   GNU General Public License for more details.
+
+   You should have received a copy of the GNU General Public License
+   along with this program.  If not, see <http://www.gnu.org/licenses/>.

@@ -1,0 +1,298 @@
+#!/bin/bash
+#
+# Filename:     mkdl.centos (diskless utility)
+# Author:       Bennett Samowich <bennett@foolean.org>
+# Date:         2014-09-03
+#
+# Description:
+#   mkdl.centos is a simle bash script to generate a diskless CentOS image
+#   The image is bootable and does not require NFS for any filesystems.
+#
+# Dependencies:
+#   lsb-release - the lsb-release utility is used to get the current
+#                 operating system codename.
+#
+# License:
+#   This program is free software: you can redistribute it and/or modify
+#   it under the terms of the GNU General Puplic License as published by
+#   the Free Software Foundation, either version 3 of the License, or
+#   any later version.
+#
+#   This program is distributed in the hope that it will be useful,
+#   but WITHOUT ANY WARRANTY; without even the implied warranty of
+#   MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
+#   GNU General Public License for more details.
+#
+#   You should have received a copy of the GNU General Public License
+#   along with this program. If not, see <http://www.gnu.org/licenses/>.
+#
+###############################################################################
+
+# verbose - helper routine to print verbose messages
+verbose() {
+    if [ "${VERBOSE}" -ge 1 ]; then
+        echo "$*"
+    fi
+}
+
+# debug - helper routine to print debugging messages
+debug() {
+  if [ "${DEBUG}" -eq 1 ]; then
+      echo "debug: $*"
+  fi
+}
+
+# fatal - helper function to print an error message and exit
+fatal() {
+    echo "fatal: $*"
+    exit 1
+}
+
+# Simple usage subroutine
+usage() {
+    cat << EOF
+usage: $(basename $0) [OPTIONS]
+
+Where:
+    -a [ARCH]     - Architecture to build an image for
+    -c            - Chroot into the image after building it
+                    (useful for last-minute changes before packing)
+    -d            - Print additional debugging messages
+    -h            - Print this message and exit
+    -i [FILE]     - File with the list of additional packages to add
+    -o [OS]       - Operating system to build an image for
+    -O [PATH]     - Path to place the output files in
+    -p [PASSWD]   - Password to use for the root account in the image
+    -r [RELEASE]  - Operating system release to build
+    -v            - Print more verbose output
+EOF
+    exit 1
+}
+
+# Set variables to their defaults
+DEBUG=0
+VERBOSE=0
+CHROOT=0
+PKGSFILE=""
+OS=$(lsb_release -is | tr 'A-Z' 'a-z')
+RELEASE=$(lsb_release -rs)
+ARCH=$(uname -m)
+if [ "${ARCH}" == "x86_64" ]; then
+    case OS in
+        debian)
+            ARCH="amd64";;
+    esac
+fi
+PASSWD="diskless"
+OUTROOT="$(readlink -f ~/mkdlbuild)"
+PACKAGES="basesystem filesystem bash kernel passwd yum vim dhclient rsyslog    \
+cronie t61pci-firmware bfa-firmware rt73usb-firmware iwl6050-firmware          \
+ipw2200-firmware aic94xx-firmware ivtv-firmware iwl5150-firmware               \
+ipw2100-firmware ql2500-firmware iwl5000-firmware iwl4965-firmware             \
+iwl6000-firmware libertas-usb8388-firmware ql2200-firmware iwl100-firmware     \
+atmel-firmware ql23xx-firmware kernel-firmware ql2400-firmware                 \
+iwl6000g2a-firmware ql2100-firmware iwl1000-firmware xorg-x11-drv-ati-firmware \
+zd1211-firmware iwl3945-firmware"
+
+# Parse the command-line options
+while getopts "a:cdhi:o:O:p:r:v" OPTION
+do
+    case $OPTION in
+        a)
+            ARCH=${OPTARG}
+            ;;
+        c)
+            CHROOT=1
+            ;;
+        d)
+            DEBUG=1
+            ;;
+        h)
+            usage
+            exit 1
+            ;;
+        i)
+            PKGSFILE=${OPTARG}
+            ;;
+#        o)
+#            OS=${OS}
+#            ;;
+        O)
+            OUTROOT=${OPTARG}
+            ;;
+        p)
+            PASSWD=${OPTARG}
+            ;;
+        r)
+            RELEASE=${OPTARG}
+            ;;
+        v)
+            VERBOSE=$((VERBOSE + 1))
+            ;;
+        ?)
+            usage
+            exit 1
+            ;;
+    esac
+done
+
+IMAGE="diskless-${OS}-${RELEASE}-${ARCH}.img"
+PXEDIR="$(readlink -f ${OUTROOT})/pxe/${OS}/${RELEASE}/${ARCH}"
+IMGDIR="$(readlink -f ${OUTROOT})/rootfs/${OS}/${RELEASE}/${ARCH}"
+CENTOS_URL="http://mirror.centos.org/centos/${RELEASE}/os/${ARCH}/Packages/"
+CENTOS_RELEASE=$(wget -O- http://mirror.centos.org/centos/${RELEASE}/os/${ARCH}/Packages/ 2>/dev/null | grep "centos-release" | sed -e 's/^.*centos-release/centos-release/' -e 's/.rpm.*/.rpm/')
+CENTOS_RELEASE_RPM="${CENTOS_URL}/${CENTOS_RELEASE}"
+SHA512_SALT=$(openssl rand 128 | tr -dc "A-Za-z0-9" | head -c 16)
+ENCRYPTED_PASSWD=$(perl -e 'print crypt("'${PASSWD}'", "\$6\$'${SHA512_SALT}'\$")')
+
+# Print out the variables for debugging
+debug "OS                 = '${OS}'"
+debug "RELEASE            = '${RELEASE}'"
+debug "ARCH               = '${ARCH}'"
+debug "PASSWD             = '${PASSWD}'"
+debug "SHA512_SALT        = '${SHA512_SALT}'"
+debug "ENCRYPTED_PASSWD   = '${ENCRYPTED_PASSWD}'"
+debug "OUTROOT            = '${OUTROOT}'"
+debug "CHROOT             = '${CHROOT}'"
+debug "DEBUG              = '${DEBUG}'"
+debug "PKGSFILE           = '${PKGSFILE}'"
+debug "IMAGE              = '${IMAGE}'"
+debug "IMGDIR             = '${IMGDIR}'"
+debug "PXEDIR             = '${PXEDIR}'"
+debug "PACKAGES           = '${PACKAGES}'"
+debug "CENTOS_URL         = '${CENTOS_URL}'"
+debug "CENTOS_RELEASE     = '${CENTOS_RELEASE}'"
+debug "CENTOS_RELEASE_RPM = '${CENTOS_RELEASE_RPM}'"
+
+# Make sure that we're on the correct OS
+if [ "${OS}" != "centos" ]; then
+    fatal "Unable to build CentOS image on ${OS}"
+    exit 1; # should never get here
+fi
+
+# Make sure that IMGDIR exists
+if [ ! -d "${IMGDIR}" ]; then
+    verbose "Creating '${IMGDIR}'"
+    mkdir -p "${IMGDIR}"
+fi
+
+# Make sure that PXEDIR exists
+if [ ! -d "${PXEDIR}" ]; then
+    verbose "Creating '${PXEDIR}'"
+    mkdir -p "${PXEDIR}"
+fi
+
+# Build the RPM database
+verbose "Building RPM database in ${IMGDIR}"
+mkdir -p "${IMGDIR}/var/lib/rpm"
+rpm --rebuilddb --root="${IMGDIR}"
+
+# Install centos-release
+verbose "Installing centos-release"
+rpm -i --root="${IMGDIR}" --nodeps -H "${CENTOS_RELEASE_RPM}"
+
+# Populate /etc/fstab
+echo "Populating /etc/fstab"
+cat > "${IMGDIR}/etc/fstab" << EOF
+# /etc/fstab: static file system information.
+#/dev/root  / ${FSTYPE} defaults 0 0
+#none      /                 tmpfs   defaults                    0 0
+devpts    /dev/pts          devpts  defaults                    0 0
+proc      /proc             proc    defaults                    0 0
+sys       /sys              sysfs   defaults                    0 0
+tmpfs     /home             tmpfs   defaults                    0 0
+tmpfs     /tmp              tmpfs   defaults,noatime            0 0
+tmpfs     /var/cache        tmpfs   defaults,noatime            0 0
+tmpfs     /var/lock         tmpfs   defaults,noatime            0 0
+tmpfs     /var/log          tmpfs   defaults,noatime            0 0
+tmpfs     /var/mail         tmpfs   defaults,noatime            0 0
+tmpfs     /var/spool/cron   tmpfs   defaults,noatime            0 0
+tmpfs     /var/tmp          tmpfs   defaults,noatime            0 0
+EOF
+
+# Install desired packages
+verbose "Installing packages"
+yum --installroot="${IMGDIR}" install -y ${PACKAGES}
+
+# Configure root's environment
+verbose "Configuring root's environment"
+cp -ap "${IMGDIR}/etc/skel/".??* "${IMGDIR}/root"
+
+# Configure networking
+verbose "Configuring networking"
+cat - > "${IMGDIR}/etc/sysconfig/network" << EOF
+NETWORKING=yes
+HOSTNAME=diskless
+EOF
+
+# Configure eth0
+verbose "Configuring eth0"
+cat - > "${IMGDIR}/etc/sysconfig/network-scripts/ifcfg-eth0" << EOF
+DEVICE="eth0"
+BOOTPROTO="dhcp"
+IPV6INIT="no"
+MTU="1500"
+NM_CONTROLLED="yes"
+ONBOOT="yes"
+TYPE="Ethernet"
+EOF
+
+# Create a /etc/resolv.conf file
+verbose "Copying in resolv.conf"
+cp -ap "/etc/resolv.conf" "${IMGDIR}/etc/"
+
+# Create a /init program
+verbose "Symlinking /sbin/init to /init"
+chroot "${IMGDIR}/" ln -s /sbin/init /init
+
+# Populate /dev
+verbose "Populating /dev"
+cp -ap "/dev/"* "${IMGDIR}/dev/"
+
+# Configure root's password
+if [ $(grep -c "root.*${ENCRYPTED_PASSWD}" "${IMGDIR}/etc/shadow") -eq 0 ]; then
+    verbose "Setting the root password"
+    chroot "${IMGDIR}"/ usermod -p "${ENCRYPTED_PASSWD}" root
+fi
+
+# Install additional packages
+if [ -f "${PKGSFILE}" ]; then
+    verbose "Installing packages from ${PKGSFILE}"
+    while read PACKAGE
+    do
+        verbose "Installing ${PACKAGE}"
+        yum --installroot="${IMGDIR}" install -y "${PACKAGE}"
+    done < "${PKGSFILE}"
+fi
+
+# Chroot into the image for any last minute fixups
+if [ ${CHROOT} -gt 0 ]; then
+    verbose "Chrooting into ${IMGDIR}"
+    chroot "${IMGDIR}"/ /bin/su -
+fi
+
+# Grab a copy of vmlinuz
+verbose "Grabbing vmlinuz"
+cp "${IMGDIR}/boot/vmlinuz-"*".${ARCH}" "${PXEDIR}/vmlinuz"
+
+# Create image from directory
+verbose "Packing image"
+cd "${IMGDIR}"
+find . -print0 | cpio -0 -H newc -o | gzip -c > "${PXEDIR}/${IMAGE}"
+
+# Create a helper file with the pxe configuration
+verbose "Creating PXE config"
+MIN_SIZE=$(( $(du -s "${IMGDIR}" | awk '{print $1}') + 256000 ))
+cat > "${PXEDIR}/pxe.cfg" << EOF
+# This is an example config for PXE booting the diskless image
+LABEL diskless
+    MENU LABEL Diskless ${OS} ${RELEASE} ${ARCH} image
+    KERNEL \$TFTP_PATH_TO/vmlinuz
+    APPEND initrd=\$TFTP_PATH_TO/diskless-${OS}-${RELEASE}-${ARCH}.img root=/dev/ram0 ramdisk_size=\$GREATER_THAN_${MIN_SIZE}
+    TEXT HELP
+    ${OS} ${RELEASE} ${ARCH} diskless image
+    ENDTEXT
+EOF
+
+echo "Done"
+

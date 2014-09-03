@@ -1,0 +1,300 @@
+#!/bin/bash
+#
+# Filename:     mkdl.debian (diskless utility)
+# Author:       Bennett Samowich <bennett@foolean.org>
+# Date:         2014-08-22
+#
+# Description:
+#   mkdl.debian is a simle bash script to generate a diskless Debian image
+#   The image is bootable and does not require NFS for any filesystems.
+#
+# Dependencies:
+#   debootstrap - the main utility used to build the inital image
+#   lsb-release - the lsb-release utility is used to get the current 
+#                 operating system codename.
+#   whois       - the mkpasswd command is part of the whois package
+#
+# License:
+#   This program is free software: you can redistribute it and/or modify
+#   it under the terms of the GNU General Puplic License as published by
+#   the Free Software Foundation, either version 3 of the License, or
+#   any later version.
+#
+#   This program is distributed in the hope that it will be useful,
+#   but WITHOUT ANY WARRANTY; without even the implied warranty of
+#   MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
+#   GNU General Public License for more details.
+#
+#   You should have received a copy of the GNU General Public License
+#   along with this program. If not, see <http://www.gnu.org/licenses/>.
+#
+###############################################################################
+
+# debug - helper routine to print debugging messages
+debug() {
+  if [ "${DEBUG}" -eq 1 ]; then
+      echo "debug: $*"
+  fi
+}
+
+# fatal - helper function to print an error message and exit
+fatal() {
+    echo "fatal: $*"
+    exit 1
+}
+
+# get_arch - get the system architecture
+get_arch() {
+    _ARCH=$(uname -m)
+    # Debian uses 'amd64' instead of 'x86_64'
+    if [ "${_ARCH}" == "x86_64" ]; then
+        _ARCH="amd64"
+    fi
+    echo "${_ARCH}"
+}
+
+# get_release - get the current operating system release
+get_release() {
+    if [ -f "/usr/bin/lsb_release" ]; then
+        echo $(lsb_release -c | awk '{print $2}')
+    else
+        echo "unknown"
+    fi
+}
+
+# Simple usage subroutine
+usage() {
+    cat << EOF
+usage: $(basename $0) [OPTIONS]
+
+Where:
+    -a [ARCH]     - Architecture to build
+    -c            - Chroot into the image after building it
+                    (useful for last-minute changes before packing)
+    -d            - Print the actual open port diff
+    -p [PACKAGES] - Comma separated list of additional
+                    packages to be installed.
+    -r [RELEASE]  - Release to build
+    -h            - Print this message and exit
+EOF
+    exit 1
+}
+
+# Initialize our variables
+ARCH=$(get_arch)
+DEBUG=0
+CHROOT=0
+FSTYPE=$(mount | grep " / " | awk '{print $5}')
+IMGROOT=$(readlink -f image-root)
+OS=$(lsb_release -i | cut -f2 -d: | awk '{print $1}' | tr 'A-Z' 'a-z')
+PACKAGES="firmware-linux-free,lsb-release,etckeeper,linux-image-${ARCH},locales,puppet,coreutils,less,openssh-client"
+PASSWD="diskless"
+RELEASE=$(get_release)
+
+# Parse the command-line options
+while getopts "a:cdhp:P:r:" OPTION
+do
+    case $OPTION in
+        a)
+            ARCH=${OPTARG}
+            ;;
+        c)
+            CHROOT=1
+            ;;
+        d) 
+            DEBUG=1
+            ;;
+        h) 
+            usage
+            exit 1
+            ;;
+        p)
+            PACKAGES="${PACKAGES},${OPTARG}"
+            ;;
+        P)
+            PASSWD=${OPTARG}
+            ;;
+        r)
+            RELEASE=${OPTARG}
+            ;;
+        ?) 
+            usage
+            exit 1
+            ;;
+    esac
+done
+
+# Make sure that we have a valid OS
+case $OS in
+    debian)
+        ;;
+    *)
+        fatal "unknown OS '${OS}', exiting"
+        exit 1
+        ;;
+esac
+
+IMAGE="diskless-${OS}-${RELEASE}-${ARCH}.img"
+OUTDIR="$(readlink -f .)/pxe/${OS}/${RELEASE}/${ARCH}"
+
+debug "OS       = '${OS}'"
+debug "REALEASE = '${RELEASE}'"
+debug "ARCH     = '${ARCH}'"
+debug "IMAGE    = '${IMAGE}'"
+debug "IMGROOT  = '${IMGROOT}'"
+debug "PACKAGES = '${PACKAGES}'"
+debug "FSTYPE   = '${FSTYPE}'"
+debug "PASSWD   = '${PASSWD}'"
+debug "OUTDIR   = '${OUTDIR}'"
+
+# We must have debootstrap for any of this to work
+HAVE_DEBOOTSTRAP=$(dpkg -l debootstrap | grep -c "^ii debootstrap")
+if [ ! ${HAVE_DEBOOTSTRAP} ]; then
+    echo "Installing debootstrap"
+    apt-get update
+    apt-get install debootstrap
+fi
+
+HAVE_WHOIS=$(dpkg -l whois | grep -c "^ii whois")
+if [ ! ${HAVE_WHOIS} ]; then
+    echo "Installing whois"
+    apt-get update
+    apt-get install whois
+fi
+
+# Make sure the working directory exists
+if [ ! -d "${IMGROOT}" ]; then
+    echo "Creating ${IMGROOT}"
+    mkdir "${IMGROOT}"
+fi
+
+# Build the image directory.  We'll use the precense of
+# /boot/vmlinuz-*-${ARCH} within the image directory to
+# determine if this process has already been run
+if [ ! -f "${IMGROOT}/boot/vmlinuz-"*"-${ARCH}" ]; then
+    echo "Building the image in ${IMGROOT}"
+    /usr/sbin/debootstrap       \
+        --arch "${ARCH}"        \
+        --include "${PACKAGES}" \
+        ${RELEASE} ${IMGROOT}
+fi
+
+# Copy in the TTY devices.
+# NOTE: It may be better to just use mknod
+for TTY in /dev/tty[1-6]; do
+    if [ ! -e "${IMGROOT}${TTY}" ]; then
+        echo "Copying in ${TTY}"
+        cp -a "${TTY}" "${IMGROOT}/dev/"
+    fi
+done
+
+# Copy in disk devices
+for DISK in /dev/sd*; do
+    if [ ! -e "${IMGROOT}${DISK}" ]; then
+        echo "Copying in ${DISK}"
+        cp -a "${DISK}" "${IMGROOT}/dev/"
+    fi
+done
+
+# Set the locales
+if [ $(egrep -v "^#|^$" "${IMGROOT}/etc/locale.gen"  | wc -l) -eq 0 ]; then
+#    chroot "${IMGROOT}"/ apt-get -y --force-yes install locales
+    cat >> "${IMGROOT}/etc/locale.gen" << EOF
+en_US ISO-8859-1
+en_US.ISO-8859-15 ISO-8859-15
+en_US.UTF-8 UTF-8
+EOF
+    chroot "${IMGROOT}"/ locale-gen
+    chroot "${IMGROOT}"/ etckeeper commit "set locales"
+fi
+
+# Set the initial hostname to 'diskless'
+if [ "$(cat ${IMGROOT}/etc/hostname)" != "diskless" ]; then
+    echo "Setting /etc/hostname"
+    echo "diskless" > "${IMGROOT}/etc/hostname"
+    chroot "${IMGROOT}"/ etckeeper commit "set /etc/hostname"
+fi
+
+# Make sure that eth0 is defined
+if [ $(grep -c "eth0" "${IMGROOT}/etc/network/interfaces") -eq 0 ]; then
+    echo "Setting /etc/network/interfaces"
+    cat >> "${IMGROOT}/etc/network/interfaces" << EOF
+
+auto eth0
+iface eth0 inet dhcp
+EOF
+    chroot "${IMGROOT}"/ etckeeper commit "set /etc/network/interfaces"
+fi
+
+# Set the root password
+ENCRYPTED_PASSWD=$(mkpasswd -m sha-512 "${PASSWD}")
+if [ $(grep -c "root.*${ENCRYPTED_PASSWD}" "${IMGROOT}/etc/shadow") -eq 0 ]; then
+    chroot "${IMGROOT}"/ usermod -p "${ENCRYPTED_PASSWD}" root
+    chroot "${IMGROOT}"/ chage -d 0 root
+    chroot "${IMGROOT}"/ etckeeper commit "set root password and force change at first login" 
+fi
+
+# Copy in the init script
+if [ ! -f "${IMGROOT}/init" ]; then
+    echo "Copying in diskless init script"
+    cp diskless-init "${IMGROOT}/init"
+    chown root.root "${IMGROOT}/init"
+    chmod 0755 "${IMGROOT}/init"
+fi
+
+echo "Populating /etc/fstab"
+cat > "${IMGROOT}/etc/fstab" << EOF
+# /etc/fstab: static file system information.
+/dev/root  / ${FSTYPE} defaults 0 0
+#none      /                 tmpfs   defaults                    0 0
+devpts    /dev/pts          devpts  defaults                    0 0
+proc      /proc             proc    defaults                    0 0
+sys       /sys              sysfs   defaults                    0 0
+tmpfs     /run              tmpfs   nosuid,size=10%,mode=755    0 0
+tmpfs     /etc/network/run  tmpfs   defaults,noatime            0 0
+tmpfs     /home             tmpfs   defaults                    0 0
+tmpfs     /tmp              tmpfs   defaults,noatime            0 0
+tmpfs     /var/lock         tmpfs   defaults,noatime            0 0
+tmpfs     /var/log          tmpfs   defaults,noatime            0 0
+tmpfs     /var/mail         tmpfs   defaults,noatime            0 0
+tmpfs     /var/spool/cron   tmpfs   defaults,noatime            0 0
+tmpfs     /var/tmp          tmpfs   defaults,noatime            0 0
+EOF
+
+# Chroot into the image for any last minute fixups
+if [ ${CHROOT} -gt 0 ]; then
+    echo "Chrooting into ${IMGROOT}"
+    chroot "${IMGROOT}"/ /bin/su -
+fi
+
+# Make sure the output directory exists
+if [ ! -d "${OUTDIR}" ]; then
+    echo "Creating ${OUTDIR}"
+    mkdir -p "${OUTDIR}"
+fi
+
+# Grab a copy of vmlinuz
+echo "Grabbing vmlinuz"
+cp "${IMGROOT}/boot/vmlinuz-"*"-${ARCH}" "${OUTDIR}/vmlinuz"
+
+# Create image from directory
+echo "Packing image"
+cd "${IMGROOT}"
+find . -print0 | cpio -0 -H newc -o | gzip -c > "${OUTDIR}/${IMAGE}"
+
+# Create a helper file with the pxe configuration
+echo "Creating PXE config"
+MIN_SIZE=$(( $(du -s "${IMGROOT}" | awk '{print $1}') + 256000 ))
+cat > "${OUTDIR}/pxe.cfg" << EOF
+# This is an example config for PXE booting the diskless image
+LABEL diskless
+    MENU LABEL Diskless ${OS} ${RELEASE} ${ARCH} image
+    KERNEL \$TFTP_PATH_TO/vmlinuz
+    APPEND initrd=\$TFTP_PATH_TO/diskless-${OS}-${RELEASE}-${ARCH}.img root=/dev/ram0 ramdisk_size=\$GREATER_THAN_${MIN_SIZE}
+    TEXT HELP
+    ${OS} ${RELEASE} ${ARCH} diskless image
+    ENDTEXT
+EOF
+
+echo "Done"
+

@@ -1,0 +1,100 @@
+#!/bin/bash
+###############################################################################
+
+# debug - helper routine to print debugging messages
+debug() {
+  if [ "${DEBUG}" -eq 1 ]; then
+      echo "debug: $*"
+  fi
+}
+
+# fatal - helper function to print an error message and exit
+fatal() {
+    echo "fatal: $*"
+    exit 1
+}
+
+# Simple usage subroutine
+usage() {
+    cat << EOF
+usage: $(basename $0) [OPTIONS]
+
+Where:
+    -a [ARCH]     - Architecture to build an image for
+    -c            - Chroot into the image after building it
+                    (useful for last-minute changes before packing)
+    -d            - Print additional debugging messages
+    -i [FILE]     - File with the list of additional packages to add
+    -o [OS]       - Operating system to build an image for
+    -O [PATH]     - Path to place the output files in
+    -p [PASSWD]   - Password to use for the root account in the image
+    -r [RELEASE]  - Operating system release to build
+    -h            - Print this message and exit
+EOF
+    exit 1
+}
+
+# Set variables to their defaults
+DEBUG=0
+CHROOT=0
+PKGSFILE=""
+OS=$(lsb_release -is | tr 'A-Z' 'a-z')
+RELEASE=$(lsb_release -rs)
+ARCH=$(uname -m)
+if [ "${ARCH}" == "x86_64" ]; then
+    case OS in
+        debian)
+            ARCH="amd64";;
+    esac
+fi
+PASSWD="diskless"
+OUTROOT="$(readlink -f ~/mkdl)"
+
+# Parse the command-line options
+while getopts "a:cdhi:o:O:p:r:" OPTION
+do
+    case $OPTION in
+        a)
+            ARCH=${OPTARG}
+            ;;
+        c)
+            CHROOT=1
+            ;;
+        d)
+            DEBUG=1
+            ;;
+        h)
+            usage
+            exit 1
+            ;;
+        i)
+            PKGSFILE=${OPTARG}
+            ;;
+        o)
+            OS=${OS}
+            ;;
+        O)
+            OUTROOT=${OPTARG}
+            ;;
+        p)
+            PASSWD=${OPTARG}
+            ;;
+        r)
+            RELEASE=${OPTARG}
+            ;;
+        ?)
+            usage
+            exit 1
+            ;;
+    esac
+done
+
+# Print out the variables for debugging
+debug "OS       = '${OS}'"
+debug "RELEASE  = '${RELEASE}'"
+debug "ARCH     = '${ARCH}'"
+debug "PASSWD   = '${PASSWD}'"
+debug "OUTROOT  = '${OUTROOT}'"
+debug "CHROOT   = '${CHROOT}'"
+debug "DEBUG    = '${DEBUG}'"
+debug "PKGSFILE = '${PKGSFILE}'"
