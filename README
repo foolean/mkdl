@@ -17,7 +17,7 @@ Debian:
 Usage
 =====
 
-    usage: mkdl.centos [OPTIONS]
+    usage: mkdl.[centos|debian] [OPTIONS]
 
     Where:
         -a [ARCH]     - Architecture to build an image for
@@ -72,6 +72,10 @@ Operating Systems
 
 Dependencies
 ============
+
+    CentOS:
+        redhat-lsb - the lsb-release utility is used to get the current
+                     operating system information.
 
     Debian:
         debootstrap - the main utility used to build the inital image
