@@ -91,7 +91,7 @@ ipw2100-firmware ql2500-firmware iwl5000-firmware iwl4965-firmware             \
 iwl6000-firmware libertas-usb8388-firmware ql2200-firmware iwl100-firmware     \
 atmel-firmware ql23xx-firmware kernel-firmware ql2400-firmware                 \
 iwl6000g2a-firmware ql2100-firmware iwl1000-firmware xorg-x11-drv-ati-firmware \
-zd1211-firmware iwl3945-firmware puppet etckeeper lvm2"
+zd1211-firmware iwl3945-firmware puppet etckeeper lvm2 mdadm"
 
 # Parse the command-line options
 while getopts "a:cdhi:O:p:r:v" OPTION

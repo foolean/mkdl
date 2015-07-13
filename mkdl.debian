@@ -85,7 +85,7 @@ if [ "${ARCH}" == "x86_64" ]; then
 fi
 PASSWD="diskless"
 OUTROOT="$(readlink -f ~/mkdlbuild)"
-PACKAGES="firmware-linux-free,lsb-release,etckeeper,linux-image-${ARCH},locales,puppet,coreutils,less,openssh-client,lvm2"
+PACKAGES="firmware-linux-free,lsb-release,etckeeper,linux-image-${ARCH},locales,puppet,coreutils,less,openssh-client,lvm2,mdadm"
 
 # Parse the command-line options
 while getopts "a:cdhi:O:p:r:v" OPTION
